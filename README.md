@@ -1,51 +1,87 @@
-# ReAct Agent from Scratch
+# ReAct Agent API
 
-A minimal tool-using agent that lets Claude decide when to call a Python function, runs it, and feeds the result back until Claude gives a final answer.
+A from-scratch ReAct agent that uses Claude and a Python tool, served as a FastAPI endpoint, containerized with Docker, and deployed on Render.
+
+**Live:** https://react-agent-api.onrender.com (interactive docs at [`/docs`](https://react-agent-api.onrender.com/docs))
+
+> Hosted on Render's free tier, which sleeps after inactivity. The first request may take up to a minute while it wakes up.
+
+## Try it
+
+```bash
+curl -X POST https://react-agent-api.onrender.com/ask \
+  -H "Content-Type: application/json" \
+  -d '{"question": "What is the weather in Tokyo?"}'
+```
+
+```json
+{"answer": "The current weather in Tokyo is **72°F (22°C)** and **sunny**! It sounds like a beautiful day in Tokyo. 🌞 Perfect weather for outdoor activities or sightseeing!"}
+```
 
 ## What it demonstrates
 
-- **The ReAct loop:** Claude reasons, requests an action (a tool call), observes the result, and continues until it can answer.
-- **Tool calling with the Anthropic API:** defining a tool with a JSON input schema and letting the model choose the tool and its arguments.
-- **Conversation state management:** the full message history, including the assistant's tool requests and the matching `tool_result` blocks, is sent back on every turn.
-- **A safety cap:** the loop is limited to 5 turns so it can never run forever.
+- **A ReAct loop written by hand:** Claude reasons, requests a tool call, sees the result, and continues until it can answer. No agent frameworks.
+- **Tool use with the Anthropic API:** a tool defined with a JSON input schema, with Claude choosing when to call it and with what arguments.
+- **A safety cap:** the loop stops after 5 turns, so it can never run forever.
+- **The agent as a deployed API:** a FastAPI service with request validation and clean JSON errors.
+- **Containerized deployment:** a Docker image run on Render, with the API key supplied only through the environment.
 
 ## How it works
 
-The user's question is sent to Claude along with a description of the available `get_weather` tool. If Claude's response has `stop_reason == "tool_use"`, the code finds each `tool_use` block, looks up the matching Python function by name, and calls it with the arguments Claude chose. Each result is wrapped in a `tool_result` block tied to the original request by its `tool_use_id`, then appended to the conversation. The updated history goes back to Claude, and the loop repeats until Claude returns `end_turn` with a final text answer or the turn cap is reached.
+1. A client sends `POST /ask` with a question.
+2. The question is sent to Claude along with a description of the `get_weather` tool.
+3. If Claude replies that it wants to use the tool, the code runs the matching Python function with the arguments Claude chose and sends the result back, tied to the original request by its ID.
+4. Claude sees the result and either asks for another tool call or gives a final answer. The full conversation is resent on every turn.
+5. The final answer is returned as `{"answer": "..."}`. If Claude has not answered within 5 turns, the loop stops.
 
-The agent is built up in four stages. Each file builds on the previous one and adds a single step:
+`get_weather` is a stub that returns fixed data, since the point is the agent mechanics rather than a weather API.
 
-| File | Step |
+## API
+
+| Endpoint | Description |
 |---|---|
-| `stage1.py` | Make one API call work, to prove the connection before adding anything else |
-| `stage2.py` | Give Claude a tool it can choose to use |
-| `stage3.py` | Read the tool request Claude sends back: the tool name, arguments, and ID |
-| `stage4.py` | The actual loop: run the tool, return the result, repeat until Claude answers |
+| `POST /ask` | Body `{"question": "..."}` (1 to 1000 characters). Returns `{"answer": "..."}`. |
+| `GET /health` | Returns `{"status": "ok"}` for uptime checks. |
 
-`get_weather` is a stub that returns fixed data, since the point is the agent mechanics rather than the weather API.
+Errors return JSON, never a stack trace:
 
-## Built from scratch
+- `400` for a missing, empty, or too-long question
+- `500` with a generic message if the agent fails (details are logged server-side only)
 
-No agent frameworks like LangChain are used, on purpose. The loop, tool dispatch, and message handling are written by hand against the Anthropic SDK, one step at a time, to understand the mechanics that frameworks abstract away.
+## Project structure
 
-## Run it
+| File | Purpose |
+|---|---|
+| `main.py` | The agent: tool definition and the ReAct loop in `run_agent(question)` |
+| `app.py` | FastAPI app: endpoints, validation, and error handling |
+| `Dockerfile` | Slim Python image that runs the app with uvicorn on `$PORT` |
+| `requirements.txt` | Pinned dependencies |
 
-```bash
-pip install anthropic python-dotenv
-```
+## Run locally
 
-Create a `.env` file in the project folder with your own key:
+Create a `.env` file with your key (it is git-ignored and excluded from the Docker image):
 
 ```
 ANTHROPIC_API_KEY=your-key-here
 ```
 
-Then run the full agent (or any earlier stage):
+With Python:
 
 ```bash
-python stage4.py
+python -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt
+uvicorn app:app --reload --port 8000
 ```
 
-## Tech used
+With Docker:
 
-Python, Anthropic API (Claude Sonnet 4.6), python-dotenv
+```bash
+docker build -t react-agent .
+docker run --rm -p 8000:8000 --env-file .env react-agent
+```
+
+Then call `http://localhost:8000/ask` with the curl command above.
+
+## Tech
+
+Python, Anthropic API (Claude Sonnet 4.6), FastAPI, Docker, Render
