@@ -1,0 +1,18 @@
+# Secrets: the key is passed in at runtime, never baked into the image
+.env
+.env.*
+
+# Local environment and caches
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+
+# Not needed to run the app
+.git/
+.gitignore
+.dockerignore
+Dockerfile
+README.md
+.DS_Store
+.vscode/
